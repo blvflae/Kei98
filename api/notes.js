@@ -1,8 +1,9 @@
 // Vercel serverless function: public read, password-protected write.
 // Env vars: NOTES_USER, NOTES_PASS, plus the Redis REST URL/token from your Upstash database.
 const crypto = require("crypto");
-const URL_ = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+const pick = (re) => { const k = Object.keys(process.env).find((n) => re.test(n)); return k && process.env[k]; };
+const URL_ = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || pick(/REST_(API_)?URL$/);
+const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || pick(/REST_(API_)?TOKEN$/);
 const KEY = "portfolio:notes";
 
 async function redis(cmd) {
@@ -11,7 +12,9 @@ async function redis(cmd) {
     headers: { Authorization: "Bearer " + TOKEN },
     body: JSON.stringify(cmd),
   });
-  return (await r.json()).result;
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  return j.result;
 }
 const h = (s) => crypto.createHash("sha256").update(String(s)).digest();
 function authorized(req) {
@@ -26,6 +29,7 @@ function authorized(req) {
 module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   try {
+    if (!URL_ || !TOKEN) return res.status(500).json({ error: "database not connected" });
     if (req.method === "GET") {
       return res.status(200).json({ notes: (await redis(["GET", KEY])) || "" });
     }
@@ -41,6 +45,6 @@ module.exports = async (req, res) => {
     }
     return res.status(200).json({ ok: true });
   } catch (e) {
-    return res.status(500).json({ error: "server error" });
+    return res.status(500).json({ error: "server error", detail: String(e.message || e) });
   }
 };
